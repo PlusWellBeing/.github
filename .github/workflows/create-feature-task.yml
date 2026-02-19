@@ -23,14 +23,71 @@ jobs:
               'API-Version': '2024-10'
             };
 
-            // Fetch all items from Monday Sprint Planning board
-            let allItems = [];
-            let cursor = null;
+            // Determine current and next week's Monday dates
+            const now = new Date();
+            const dayOfWeek = now.getUTCDay();
+            const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+            const thisMonday = new Date(now);
+            thisMonday.setUTCDate(now.getUTCDate() + mondayOffset);
+            thisMonday.setUTCHours(0, 0, 0, 0);
 
-            do {
-              const query = cursor
-                ? `query { next_items_page(cursor: "${cursor}", limit: 100) { cursor items { id name } } }`
-                : `query { boards(ids: [${boardId}]) { items_page(limit: 100) { cursor items { id name } } } }`;
+            const nextMonday = new Date(thisMonday);
+            nextMonday.setUTCDate(thisMonday.getUTCDate() + 7);
+
+            const nextFriday = new Date(nextMonday);
+            nextFriday.setUTCDate(nextMonday.getUTCDate() + 4);
+
+            core.info(`Current week: ${thisMonday.toISOString().slice(0, 10)}, Next week ends: ${nextFriday.toISOString().slice(0, 10)}`);
+
+            // Fetch board groups and find current + next week
+            const groupsQuery = `query { boards(ids: [${boardId}]) { groups { id title } } }`;
+            const groupsRes = await fetch('https://api.monday.com/v2', {
+              method: 'POST', headers,
+              body: JSON.stringify({ query: groupsQuery })
+            });
+            const groupsData = await groupsRes.json();
+            const allGroups = groupsData.data.boards[0].groups;
+
+            // Parse group titles like "February 16-20" or "November 10-14, 2025"
+            const months = { january: 0, february: 1, march: 2, april: 3, may: 4, june: 5,
+              july: 6, august: 7, september: 8, october: 9, november: 10, december: 11 };
+
+            const targetGroupIds = [];
+            for (const group of allGroups) {
+              const match = group.title.match(/^(\w+)\s+(\d+)\s*[-–]\s*(\d+)(?:,?\s*(\d{4}))?$/i);
+              if (!match) continue;
+
+              const month = months[match[1].toLowerCase()];
+              if (month === undefined) continue;
+
+              const startDay = parseInt(match[2]);
+              const year = match[4] ? parseInt(match[4]) : now.getUTCFullYear();
+              const groupStart = new Date(Date.UTC(year, month, startDay));
+
+              // Group matches if it overlaps with current week or next week
+              if (groupStart >= thisMonday && groupStart <= nextFriday) {
+                targetGroupIds.push(group.id);
+                core.info(`Matched group: "${group.title}" (${group.id})`);
+              }
+            }
+
+            if (targetGroupIds.length === 0) {
+              core.info('No matching groups found for current/next week. Nothing to sync.');
+              return;
+            }
+
+            // Fetch items from matched groups only
+            let allItems = [];
+            for (const groupId of targetGroupIds) {
+              const query = `query {
+                boards(ids: [${boardId}]) {
+                  groups(ids: ["${groupId}"]) {
+                    items_page(limit: 100) {
+                      items { id name }
+                    }
+                  }
+                }
+              }`;
 
               const res = await fetch('https://api.monday.com/v2', {
                 method: 'POST', headers,
@@ -43,20 +100,15 @@ jobs:
                 return;
               }
 
-              let page;
-              if (cursor) {
-                page = data.data.next_items_page;
-              } else {
-                page = data.data.boards[0].items_page;
-              }
+              const items = data.data.boards[0].groups[0].items_page.items;
+              allItems = allItems.concat(items);
+            }
 
-              allItems = allItems.concat(page.items);
-              cursor = page.cursor;
-            } while (cursor);
+            core.info(`Found ${allItems.length} items in current/next week groups`);
 
-            core.info(`Found ${allItems.length} items on Monday board`);
+            if (allItems.length === 0) return;
 
-            // Fetch all existing feature tasks in one pass to avoid search API rate limits
+            // Fetch all existing feature tasks in one pass
             const existingMondayIds = new Set();
             let page = 1;
             while (true) {
@@ -109,9 +161,7 @@ jobs:
               created++;
 
               // Rate limit: pause between creations
-              if (created > 0) {
-                await new Promise(r => setTimeout(r, 1000));
-              }
+              await new Promise(r => setTimeout(r, 1000));
             }
 
             core.info(`Done. Created ${created} new feature tasks.`);
