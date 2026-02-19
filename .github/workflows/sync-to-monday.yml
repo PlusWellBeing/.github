@@ -29,24 +29,29 @@ jobs:
             core.setOutput('repo_name', context.payload.repository.name);
 
             // Find parent issue via sub-issues API
-            const result = await github.graphql(`
-              query($issueId: ID!) {
-                node(id: "${context.payload.issue.node_id}") {
-                  ... on Issue {
-                    parentIssue {
-                      number
-                      body
-                      repository {
-                        owner { login }
-                        name
+            const result = await github.request('POST /graphql', {
+              headers: {
+                'GraphQL-Features': 'sub_issues'
+              },
+              query: `
+                query {
+                  node(id: "${context.payload.issue.node_id}") {
+                    ... on Issue {
+                      parent {
+                        number
+                        body
+                        repository {
+                          owner { login }
+                          name
+                        }
                       }
                     }
                   }
                 }
-              }
-            `);
+              `
+            });
 
-            const parent = result.node?.parentIssue;
+            const parent = result.data.node?.parent;
             if (!parent) {
               core.info('No parent issue found. Skipping Monday sync.');
               core.setOutput('has_monday_id', 'false');
@@ -86,7 +91,11 @@ jobs:
             const mondayId = '${{ steps.parse.outputs.monday_item_id }}';
 
             // Get all sub-issues of the parent feature task
-            const result = await github.graphql(`
+            const result = await github.request('POST /graphql', {
+              headers: {
+                'GraphQL-Features': 'sub_issues'
+              },
+              query: `
               query($owner: String!, $repo: String!, $number: Int!) {
                 repository(owner: $owner, name: $repo) {
                   issue(number: $number) {
@@ -104,13 +113,15 @@ jobs:
                   }
                 }
               }
-            `, {
-              owner: parentOwner,
-              repo: parentRepo,
-              number: parentNumber
+              `,
+              variables: {
+                owner: parentOwner,
+                repo: parentRepo,
+                number: parentNumber
+              }
             });
 
-            const subIssues = result.repository.issue.subIssues.nodes;
+            const subIssues = result.data.repository.issue.subIssues.nodes;
 
             let totalEstimate = 0;
             let openCount = 0;
