@@ -29,29 +29,36 @@ jobs:
             core.setOutput('repo_name', context.payload.repository.name);
 
             // Find parent issue via sub-issues API
-            const result = await github.request('POST /graphql', {
+            const token = await core.getIDToken().catch(() => null);
+            const response = await fetch('https://api.github.com/graphql', {
+              method: 'POST',
               headers: {
+                'Authorization': `Bearer ${{ secrets.GH_ORG_PAT || github.token }}`,
+                'Content-Type': 'application/json',
                 'GraphQL-Features': 'sub_issues'
               },
-              query: `
-                query {
-                  node(id: "${context.payload.issue.node_id}") {
-                    ... on Issue {
-                      parent {
-                        number
-                        body
-                        repository {
-                          owner { login }
-                          name
+              body: JSON.stringify({
+                query: `
+                  query {
+                    node(id: "${context.payload.issue.node_id}") {
+                      ... on Issue {
+                        parent {
+                          number
+                          body
+                          repository {
+                            owner { login }
+                            name
+                          }
                         }
                       }
                     }
                   }
-                }
-              `
+                `
+              })
             });
 
-            const parent = result.data.node?.parent;
+            const result = await response.json();
+            const parent = result.data?.node?.parent;
             if (!parent) {
               core.info('No parent issue found. Skipping Monday sync.');
               core.setOutput('has_monday_id', 'false');
@@ -91,36 +98,42 @@ jobs:
             const mondayId = '${{ steps.parse.outputs.monday_item_id }}';
 
             // Get all sub-issues of the parent feature task
-            const result = await github.request('POST /graphql', {
+            const response = await fetch('https://api.github.com/graphql', {
+              method: 'POST',
               headers: {
+                'Authorization': `Bearer ${{ secrets.GH_ORG_PAT || github.token }}`,
+                'Content-Type': 'application/json',
                 'GraphQL-Features': 'sub_issues'
               },
-              query: `
-              query($owner: String!, $repo: String!, $number: Int!) {
-                repository(owner: $owner, name: $repo) {
-                  issue(number: $number) {
-                    subIssues(first: 100) {
-                      nodes {
-                        number
-                        title
-                        state
-                        body
-                        repository {
-                          name
+              body: JSON.stringify({
+                query: `
+                  query($owner: String!, $repo: String!, $number: Int!) {
+                    repository(owner: $owner, name: $repo) {
+                      issue(number: $number) {
+                        subIssues(first: 100) {
+                          nodes {
+                            number
+                            title
+                            state
+                            body
+                            repository {
+                              name
+                            }
+                          }
                         }
                       }
                     }
                   }
+                `,
+                variables: {
+                  owner: parentOwner,
+                  repo: parentRepo,
+                  number: parentNumber
                 }
-              }
-              `,
-              variables: {
-                owner: parentOwner,
-                repo: parentRepo,
-                number: parentNumber
-              }
+              })
             });
 
+            const result = await response.json();
             const subIssues = result.data.repository.issue.subIssues.nodes;
 
             let totalEstimate = 0;
