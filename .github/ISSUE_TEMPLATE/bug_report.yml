@@ -7,22 +7,6 @@ body:
     attributes:
       value: |
         Thanks for taking the time to fill out this bug report!
-  - type: input
-    id: feature-task
-    attributes:
-      label: Feature Task
-      description: Link to the parent feature task in GitHub Projects (if applicable).
-      placeholder: "e.g., https://github.com/PlusWellBeing/.github/issues/5"
-    validations:
-      required: false
-  - type: input
-    id: estimate-hours
-    attributes:
-      label: Estimate (Hours)
-      description: How many hours do you estimate the fix will take?
-      placeholder: "e.g., 2"
-    validations:
-      required: true
   - type: textarea
     id: description
     attributes:

@@ -7,22 +7,6 @@ body:
     attributes:
       value: |
         Thanks for helping us improve our documentation!
-  - type: input
-    id: feature-task
-    attributes:
-      label: Feature Task
-      description: Link to the parent feature task in GitHub Projects (if applicable).
-      placeholder: "e.g., https://github.com/PlusWellBeing/.github/issues/5"
-    validations:
-      required: false
-  - type: input
-    id: estimate-hours
-    attributes:
-      label: Estimate (Hours)
-      description: How many hours do you estimate this will take?
-      placeholder: "e.g., 2"
-    validations:
-      required: true
   - type: dropdown
     id: doc-type
     attributes:
