@@ -1,0 +1,49 @@
+name: Create Feature Task from Monday
+
+on:
+  repository_dispatch:
+    types: [monday-item-created]
+
+jobs:
+  create:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create feature task issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const itemId = context.payload.client_payload.item_id;
+            const itemName = context.payload.client_payload.item_name;
+
+            if (!itemId || !itemName) {
+              core.setFailed('Missing item_id or item_name in payload');
+              return;
+            }
+
+            // Check if a feature task already exists for this Monday item
+            const existing = await github.rest.search.issuesAndPullRequests({
+              q: `"### Monday Item ID" "${itemId}" in:body repo:${context.repo.owner}/${context.repo.repo} is:issue`
+            });
+
+            const alreadyExists = existing.data.items.some(issue => {
+              const body = issue.body || '';
+              const match = body.match(/### Monday Item ID\s*\n\s*(\d+)/);
+              return match && match[1] === String(itemId);
+            });
+
+            if (alreadyExists) {
+              core.info(`Feature task already exists for Monday item ${itemId}. Skipping.`);
+              return;
+            }
+
+            const body = `### Monday Item ID\n\n${itemId}\n\nCreated automatically from Monday Sprint Planning board.`;
+
+            const { data: issue } = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: itemName,
+              body: body,
+              labels: ['feature-task']
+            });
+
+            core.info(`Created feature task #${issue.number}: ${issue.html_url}`);
