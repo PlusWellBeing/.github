@@ -1,0 +1,56 @@
+name: Transfer Implementation Task
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  transfer:
+    runs-on: ubuntu-latest
+    if: contains(github.event.issue.labels.*.name, 'task')
+    steps:
+      - name: Transfer issue to destination repo
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GH_ORG_PAT || github.token }}
+          script: |
+            const body = context.payload.issue.body || '';
+
+            // Parse destination repo from issue body
+            const repoMatch = body.match(/### Destination Repo\s*\n\s*(\S+)/);
+            if (!repoMatch) {
+              core.info('No destination repo found. Skipping transfer.');
+              return;
+            }
+
+            const destRepo = repoMatch[1];
+            const issueNumber = context.payload.issue.number;
+
+            core.info(`Transferring issue #${issueNumber} to ${destRepo}`);
+
+            try {
+              await github.graphql(`
+                mutation($issueId: ID!, $repoId: ID!) {
+                  transferIssue(input: { issueId: $issueId, repositoryId: $repoId }) {
+                    issue {
+                      number
+                      url
+                    }
+                  }
+                }
+              `, {
+                issueId: context.payload.issue.node_id,
+                repoId: await github.graphql(`
+                  query($owner: String!, $name: String!) {
+                    repository(owner: $owner, name: $name) { id }
+                  }
+                `, {
+                  owner: context.repo.owner,
+                  name: destRepo
+                }).then(r => r.repository.id)
+              });
+
+              core.info(`Issue transferred to ${context.repo.owner}/${destRepo}`);
+            } catch (err) {
+              core.setFailed(`Failed to transfer issue: ${err.message}`);
+            }
