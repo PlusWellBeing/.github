@@ -1,0 +1,89 @@
+name: Documentation Improvement
+description: Suggest improvements to documentation
+title: "[Docs]: "
+labels: ["documentation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping us improve our documentation!
+  - type: input
+    id: feature-task
+    attributes:
+      label: Feature Task
+      description: Link to the parent feature task in GitHub Projects (if applicable).
+      placeholder: "e.g., https://github.com/PlusWellBeing/.github/issues/5"
+    validations:
+      required: false
+  - type: input
+    id: estimate-hours
+    attributes:
+      label: Estimate (Hours)
+      description: How many hours do you estimate this will take?
+      placeholder: "e.g., 2"
+    validations:
+      required: true
+  - type: dropdown
+    id: doc-type
+    attributes:
+      label: Documentation Type
+      description: What type of documentation needs improvement?
+      options:
+        - README
+        - Code comments
+        - API documentation
+        - User guide
+        - Setup/Installation instructions
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: doc-location
+    attributes:
+      label: Documentation Location
+      description: Where is this documentation located? (file path or URL)
+      placeholder: e.g., README.md, docs/api.md, or https://...
+    validations:
+      required: false
+  - type: textarea
+    id: issue-description
+    attributes:
+      label: Issue Description
+      description: What's wrong or missing with the current documentation?
+      placeholder: Describe what needs to be improved...
+    validations:
+      required: true
+  - type: textarea
+    id: proposed-change
+    attributes:
+      label: Proposed Change
+      description: How should the documentation be improved?
+      placeholder: Describe what should be added, changed, or clarified...
+    validations:
+      required: true
+  - type: textarea
+    id: current-content
+    attributes:
+      label: Current Content
+      description: If applicable, paste the current documentation content that needs improvement.
+      placeholder: Paste current content here...
+      render: markdown
+    validations:
+      required: false
+  - type: textarea
+    id: suggested-content
+    attributes:
+      label: Suggested Content
+      description: If you have specific wording suggestions, provide them here.
+      placeholder: Paste your suggested content here...
+      render: markdown
+    validations:
+      required: false
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: Add any other context about the documentation improvement here.
+      placeholder: Any other relevant information...
+    validations:
+      required: false
