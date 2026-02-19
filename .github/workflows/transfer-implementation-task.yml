@@ -9,27 +9,45 @@ jobs:
     runs-on: ubuntu-latest
     if: contains(github.event.issue.labels.*.name, 'task')
     steps:
-      - name: Transfer issue to destination repo
+      - name: Transfer issue and update parent tasklist
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GH_ORG_PAT || github.token }}
           script: |
             const body = context.payload.issue.body || '';
 
-            // Parse destination repo from issue body
+            // Parse destination repo
             const repoMatch = body.match(/### Destination Repo\s*\n\s*(\S+)/);
             if (!repoMatch) {
               core.info('No destination repo found. Skipping transfer.');
               return;
             }
 
+            // Parse feature task URL
+            const featureMatch = body.match(/### Feature Task\s*\n\s*(https:\/\/github\.com\/([^/]+)\/([^/]+)\/issues\/(\d+))/);
+            if (!featureMatch) {
+              core.info('No feature task found. Skipping tasklist update.');
+            }
+
             const destRepo = repoMatch[1];
             const issueNumber = context.payload.issue.number;
+            const issueTitle = context.payload.issue.title;
 
             core.info(`Transferring issue #${issueNumber} to ${destRepo}`);
 
             try {
-              await github.graphql(`
+              // Get destination repo ID
+              const repoData = await github.graphql(`
+                query($owner: String!, $name: String!) {
+                  repository(owner: $owner, name: $name) { id }
+                }
+              `, {
+                owner: context.repo.owner,
+                name: destRepo
+              });
+
+              // Transfer the issue
+              const result = await github.graphql(`
                 mutation($issueId: ID!, $repoId: ID!) {
                   transferIssue(input: { issueId: $issueId, repositoryId: $repoId }) {
                     issue {
@@ -40,17 +58,44 @@ jobs:
                 }
               `, {
                 issueId: context.payload.issue.node_id,
-                repoId: await github.graphql(`
-                  query($owner: String!, $name: String!) {
-                    repository(owner: $owner, name: $name) { id }
-                  }
-                `, {
-                  owner: context.repo.owner,
-                  name: destRepo
-                }).then(r => r.repository.id)
+                repoId: repoData.repository.id
               });
 
-              core.info(`Issue transferred to ${context.repo.owner}/${destRepo}`);
+              const newNumber = result.transferIssue.issue.number;
+              const newUrl = result.transferIssue.issue.url;
+              core.info(`Issue transferred to ${context.repo.owner}/${destRepo}#${newNumber}`);
+
+              // Update parent feature task's tasklist
+              if (featureMatch) {
+                const featureOwner = featureMatch[2];
+                const featureRepo = featureMatch[3];
+                const featureNumber = parseInt(featureMatch[4]);
+
+                const { data: featureTask } = await github.rest.issues.get({
+                  owner: featureOwner,
+                  repo: featureRepo,
+                  issue_number: featureNumber
+                });
+
+                const taskRef = `- [ ] ${context.repo.owner}/${destRepo}#${newNumber}`;
+                const marker = '<!-- Tasks will be added here automatically -->';
+                let updatedBody;
+
+                if (featureTask.body.includes(marker)) {
+                  updatedBody = featureTask.body.replace(marker, `${taskRef}\n${marker}`);
+                } else {
+                  updatedBody = featureTask.body + `\n${taskRef}`;
+                }
+
+                await github.rest.issues.update({
+                  owner: featureOwner,
+                  repo: featureRepo,
+                  issue_number: featureNumber,
+                  body: updatedBody
+                });
+
+                core.info(`Added ${destRepo}#${newNumber} to feature task #${featureNumber} tasklist`);
+              }
             } catch (err) {
               core.setFailed(`Failed to transfer issue: ${err.message}`);
             }

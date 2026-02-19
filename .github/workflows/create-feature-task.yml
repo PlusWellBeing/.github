@@ -36,7 +36,17 @@ jobs:
               return;
             }
 
-            const body = `### Monday Item ID\n\n${itemId}\n\nCreated automatically from Monday Sprint Planning board.`;
+            const body = [
+              `### Monday Item ID`,
+              ``,
+              `${itemId}`,
+              ``,
+              `---`,
+              ``,
+              `### Implementation Tasks`,
+              ``,
+              `<!-- Tasks will be added here automatically -->`
+            ].join('\n');
 
             const { data: issue } = await github.rest.issues.create({
               owner: context.repo.owner,
