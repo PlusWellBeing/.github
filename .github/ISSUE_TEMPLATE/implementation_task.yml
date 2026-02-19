@@ -6,34 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Create an implementation task linked to a feature. The issue will be automatically transferred to the selected repo.
-  - type: input
-    id: feature-task
-    attributes:
-      label: Feature Task
-      description: Link to the parent feature task on the Feature Board.
-      placeholder: "e.g., https://github.com/PlusWellBeing/.github/issues/5"
-    validations:
-      required: true
-  - type: dropdown
-    id: destination-repo
-    attributes:
-      label: Destination Repo
-      description: Which repo should this task be created in?
-      options:
-        - pwb-pwa-app
-        - platform
-        - pwb-mobile-ios
-        - pwb-patient-app
-        - pwb-provider-portal
-        - pwb-front-end
-        - pwb-mobile-android
-        - admin-app
-        - platform-agents
-        - pwb-medplum-bots
-        - documentation
-    validations:
-      required: true
+        Create an implementation task. Add this as a sub-issue of a feature task on the Feature Board.
   - type: input
     id: estimate-hours
     attributes:

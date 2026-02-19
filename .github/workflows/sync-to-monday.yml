@@ -12,137 +12,126 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - name: Parse issue fields
+      - name: Parse issue and resolve parent feature task
         id: parse
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const body = context.payload.issue.body || '';
-
-            // Parse Feature Task URL
-            const featureTaskMatch = body.match(/### Feature Task\s*\n\s*(https:\/\/github\.com\/([^/]+)\/([^/]+)\/issues\/(\d+))/);
-            const estimateMatch = body.match(/### Estimate \(Hours\)\s*\n\s*(\d+(?:\.\d+)?)/);
-
-            const featureTaskUrl = featureTaskMatch ? featureTaskMatch[1] : '';
-            const featureTaskOwner = featureTaskMatch ? featureTaskMatch[2] : '';
-            const featureTaskRepo = featureTaskMatch ? featureTaskMatch[3] : '';
-            const featureTaskNumber = featureTaskMatch ? featureTaskMatch[4] : '';
-            const estimateHours = estimateMatch ? parseFloat(estimateMatch[1]) : 0;
-            const hasFeatureTask = featureTaskMatch ? 'true' : 'false';
-
-            core.setOutput('feature_task_url', featureTaskUrl);
-            core.setOutput('feature_task_owner', featureTaskOwner);
-            core.setOutput('feature_task_repo', featureTaskRepo);
-            core.setOutput('feature_task_number', featureTaskNumber);
-            core.setOutput('has_feature_task', hasFeatureTask);
-            core.setOutput('estimate_hours', estimateHours);
-            core.setOutput('issue_number', context.payload.issue.number);
-            core.setOutput('issue_title', context.payload.issue.title);
-            core.setOutput('issue_url', context.payload.issue.html_url);
-            core.setOutput('issue_state', context.payload.issue.state);
-            core.setOutput('repo_name', context.payload.repository.name);
-
-            if (hasFeatureTask === 'false') {
-              core.info('No Feature Task found in issue body. Skipping sync.');
-            } else {
-              core.info(`Feature Task: ${featureTaskUrl}, Estimate: ${estimateHours}h`);
-            }
-
-      - name: Resolve Monday ID from feature task
-        if: steps.parse.outputs.has_feature_task == 'true'
-        id: resolve
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GH_ORG_PAT || github.token }}
           script: |
-            const owner = '${{ steps.parse.outputs.feature_task_owner }}';
-            const repo = '${{ steps.parse.outputs.feature_task_repo }}';
-            const issueNumber = parseInt('${{ steps.parse.outputs.feature_task_number }}');
+            const body = context.payload.issue.body || '';
+            const estimateMatch = body.match(/### Estimate \(Hours\)\s*\n\s*(\d+(?:\.\d+)?)/);
+            const estimateHours = estimateMatch ? parseFloat(estimateMatch[1]) : 0;
 
-            const { data: featureTask } = await github.rest.issues.get({
-              owner,
-              repo,
-              issue_number: issueNumber
-            });
+            core.setOutput('estimate_hours', estimateHours);
+            core.setOutput('issue_number', context.payload.issue.number);
+            core.setOutput('issue_url', context.payload.issue.html_url);
+            core.setOutput('issue_state', context.payload.issue.state);
+            core.setOutput('repo_name', context.payload.repository.name);
 
-            const body = featureTask.body || '';
-            const mondayIdMatch = body.match(/### Monday Item ID\s*\n\s*(\d+)/);
+            // Find parent issue via sub-issues API
+            const result = await github.graphql(`
+              query($issueId: ID!) {
+                node(id: "${context.payload.issue.node_id}") {
+                  ... on Issue {
+                    parentIssue {
+                      number
+                      body
+                      repository {
+                        owner { login }
+                        name
+                      }
+                    }
+                  }
+                }
+              }
+            `);
+
+            const parent = result.node?.parentIssue;
+            if (!parent) {
+              core.info('No parent issue found. Skipping Monday sync.');
+              core.setOutput('has_monday_id', 'false');
+              return;
+            }
+
+            const parentBody = parent.body || '';
+            const mondayIdMatch = parentBody.match(/### Monday Item ID\s*\n\s*(\d+)/);
 
             if (!mondayIdMatch) {
-              core.info('Feature task does not have a Monday Item ID. Skipping Monday sync.');
+              core.info('Parent issue does not have a Monday Item ID. Skipping.');
               core.setOutput('has_monday_id', 'false');
-              core.setOutput('monday_item_id', '');
               return;
             }
 
             const mondayItemId = mondayIdMatch[1];
+            const parentRef = `${parent.repository.owner.login}/${parent.repository.name}#${parent.number}`;
+
             core.setOutput('has_monday_id', 'true');
             core.setOutput('monday_item_id', mondayItemId);
-            core.info(`Resolved Monday ID: ${mondayItemId} from feature task ${owner}/${repo}#${issueNumber}`);
+            core.setOutput('parent_owner', parent.repository.owner.login);
+            core.setOutput('parent_repo', parent.repository.name);
+            core.setOutput('parent_number', parent.number);
+
+            core.info(`Parent: ${parentRef}, Monday ID: ${mondayItemId}, Estimate: ${estimateHours}h`);
 
       - name: Calculate rolled-up estimate
-        if: steps.resolve.outputs.has_monday_id == 'true'
+        if: steps.parse.outputs.has_monday_id == 'true'
         id: rollup
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GH_ORG_PAT || github.token }}
           script: |
-            const mondayId = '${{ steps.resolve.outputs.monday_item_id }}';
-            const featureTaskUrl = '${{ steps.parse.outputs.feature_task_url }}';
-            const hasOrgPat = '${{ secrets.GH_ORG_PAT }}' !== '';
+            const parentOwner = '${{ steps.parse.outputs.parent_owner }}';
+            const parentRepo = '${{ steps.parse.outputs.parent_repo }}';
+            const parentNumber = parseInt('${{ steps.parse.outputs.parent_number }}');
+            const mondayId = '${{ steps.parse.outputs.monday_item_id }}';
 
-            // Search for issues that reference this feature task
-            let searchQuery;
-            if (hasOrgPat) {
-              searchQuery = `"${featureTaskUrl}" in:body org:${context.repo.owner} is:issue`;
-              core.info('Using org-wide search (GH_ORG_PAT available)');
-            } else {
-              searchQuery = `"${featureTaskUrl}" in:body repo:${context.repo.owner}/${context.repo.repo} is:issue`;
-              core.info('Using single-repo search (no GH_ORG_PAT)');
-            }
-
-            core.info(`Search query: ${searchQuery}`);
-
-            let allItems = [];
-            let page = 1;
-            while (true) {
-              const results = await github.rest.search.issuesAndPullRequests({
-                q: searchQuery,
-                per_page: 100,
-                page: page
-              });
-              allItems = allItems.concat(results.data.items);
-              if (allItems.length >= results.data.total_count || results.data.items.length === 0) {
-                break;
+            // Get all sub-issues of the parent feature task
+            const result = await github.graphql(`
+              query($owner: String!, $repo: String!, $number: Int!) {
+                repository(owner: $owner, name: $repo) {
+                  issue(number: $number) {
+                    subIssues(first: 100) {
+                      nodes {
+                        number
+                        title
+                        state
+                        body
+                        repository {
+                          name
+                        }
+                      }
+                    }
+                  }
+                }
               }
-              page++;
-            }
+            `, {
+              owner: parentOwner,
+              repo: parentRepo,
+              number: parentNumber
+            });
+
+            const subIssues = result.repository.issue.subIssues.nodes;
 
             let totalEstimate = 0;
             let openCount = 0;
             let closedCount = 0;
             const linkedIssues = [];
 
-            for (const issue of allItems) {
-              if (issue.pull_request) continue;
-
+            for (const issue of subIssues) {
               const body = issue.body || '';
-              // Verify this issue actually references the feature task
-              if (!body.includes(featureTaskUrl)) continue;
-
               const estMatch = body.match(/### Estimate \(Hours\)\s*\n\s*(\d+(?:\.\d+)?)/);
               const hours = estMatch ? parseFloat(estMatch[1]) : 0;
 
               totalEstimate += hours;
               linkedIssues.push({
                 number: issue.number,
-                repo: issue.repository_url.split('/').pop(),
+                repo: issue.repository.name,
                 title: issue.title,
                 state: issue.state,
                 estimate: hours
               });
 
-              if (issue.state === 'open') openCount++;
+              if (issue.state === 'OPEN') openCount++;
               else closedCount++;
             }
 
@@ -164,13 +153,13 @@ jobs:
             core.info(`Linked issues: ${JSON.stringify(linkedIssues, null, 2)}`);
 
       - name: Update Monday item
-        if: steps.resolve.outputs.has_monday_id == 'true'
+        if: steps.parse.outputs.has_monday_id == 'true'
         uses: actions/github-script@v7
         env:
           MONDAY_API_TOKEN: ${{ secrets.MONDAY_API_TOKEN }}
         with:
           script: |
-            const mondayItemId = '${{ steps.resolve.outputs.monday_item_id }}';
+            const mondayItemId = '${{ steps.parse.outputs.monday_item_id }}';
             const totalEstimate = parseFloat('${{ steps.rollup.outputs.total_estimate }}');
             const mondayStatus = '${{ steps.rollup.outputs.monday_status }}';
             const boardId = '18332167710';
@@ -223,20 +212,19 @@ jobs:
             core.info(`Updated Monday item ${mondayItemId}: ${totalEstimate}h, status=${mondayStatus}`);
 
       - name: Sync Monday subitem
-        if: steps.resolve.outputs.has_monday_id == 'true'
+        if: steps.parse.outputs.has_monday_id == 'true'
         uses: actions/github-script@v7
         env:
           MONDAY_API_TOKEN: ${{ secrets.MONDAY_API_TOKEN }}
         with:
           script: |
-            const mondayItemId = '${{ steps.resolve.outputs.monday_item_id }}';
+            const mondayItemId = '${{ steps.parse.outputs.monday_item_id }}';
             const issueTitle = context.payload.issue.title;
             const issueUrl = context.payload.issue.html_url;
             const issueNumber = '${{ steps.parse.outputs.issue_number }}';
             const repoName = context.payload.repository.name;
             const estimate = parseFloat('${{ steps.parse.outputs.estimate_hours }}') || 0;
             const issueState = context.payload.issue.state;
-            const action = context.payload.action;
             const subitemBoardId = '18365228709';
 
             const prefix = `[${repoName}] #${issueNumber}`;
@@ -248,7 +236,6 @@ jobs:
               'API-Version': '2024-10'
             };
 
-            // Helper: find a subitem matching this issue under a given parent item
             async function findSubitem(parentId) {
               const query = `
                 query ($itemId: [ID!]!) {
@@ -269,54 +256,10 @@ jobs:
               return subitems.find(s => s.name.startsWith(prefix));
             }
 
-            // Helper: delete a subitem
-            async function deleteSubitem(subitemId) {
-              const mutation = `mutation ($itemId: ID!) { delete_item(item_id: $itemId) { id } }`;
-              const res = await fetch('https://api.monday.com/v2', {
-                method: 'POST', headers,
-                body: JSON.stringify({ query: mutation, variables: { itemId: subitemId } })
-              });
-              const data = await res.json();
-              if (data.errors) core.warning(`Delete subitem errors: ${JSON.stringify(data.errors)}`);
-              else core.info(`Deleted subitem ${subitemId}`);
-            }
-
             try {
-              // On edit: check if feature task changed and clean up old subitem
-              if (action === 'edited' && context.payload.changes?.body) {
-                const oldBody = context.payload.changes.body.from || '';
-                const oldFeatureMatch = oldBody.match(/### Feature Task\s*\n\s*https:\/\/github\.com\/([^/]+)\/([^/]+)\/issues\/(\d+)/);
-
-                if (oldFeatureMatch) {
-                  // Fetch old feature task to get old Monday ID
-                  const oldOwner = oldFeatureMatch[1];
-                  const oldRepo = oldFeatureMatch[2];
-                  const oldNumber = parseInt(oldFeatureMatch[3]);
-                  try {
-                    const token = '${{ secrets.GH_ORG_PAT || github.token }}';
-                    const ghRes = await fetch(`https://api.github.com/repos/${oldOwner}/${oldRepo}/issues/${oldNumber}`, {
-                      headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github+json' }
-                    });
-                    const oldFeature = await ghRes.json();
-                    const oldMondayMatch = (oldFeature.body || '').match(/### Monday Item ID\s*\n\s*(\d+)/);
-                    const oldMondayId = oldMondayMatch ? oldMondayMatch[1] : '';
-
-                    if (oldMondayId && oldMondayId !== mondayItemId) {
-                      core.info(`Monday ID changed from ${oldMondayId} to ${mondayItemId}`);
-                      const oldSubitem = await findSubitem(oldMondayId);
-                      if (oldSubitem) await deleteSubitem(oldSubitem.id);
-                    }
-                  } catch (err) {
-                    core.warning(`Could not check old feature task: ${err.message}`);
-                  }
-                }
-              }
-
-              // Check if subitem already exists under current parent (duplicate guard)
               const existing = await findSubitem(mondayItemId);
 
               if (existing) {
-                // Update existing subitem
                 const subitemStatus = issueState === 'closed' ? 'Done' : 'Working on it';
                 const columnValues = JSON.stringify({
                   status: { label: subitemStatus },
@@ -339,7 +282,6 @@ jobs:
                 if (data.errors) core.warning(`Subitem update errors: ${JSON.stringify(data.errors)}`);
                 else core.info(`Updated subitem ${existing.id}: estimate=${estimate}h, status=${subitemStatus}`);
               } else {
-                // Create new subitem
                 const columnValues = JSON.stringify({
                   status: { label: 'Working on it' },
                   link_mm0pht2g: { url: issueUrl, text: `#${issueNumber}` },
