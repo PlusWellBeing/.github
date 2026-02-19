@@ -1,59 +1,105 @@
-name: Create Feature Task from Monday
+name: Sync Monday Items to Feature Board
 
 on:
-  repository_dispatch:
-    types: [monday-item-created]
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
 
 jobs:
-  create:
+  sync:
     runs-on: ubuntu-latest
     steps:
-      - name: Create feature task issue
+      - name: Sync Monday items to GitHub feature tasks
         uses: actions/github-script@v7
+        env:
+          MONDAY_API_TOKEN: ${{ secrets.MONDAY_API_TOKEN }}
         with:
+          github-token: ${{ secrets.GH_ORG_PAT || github.token }}
           script: |
-            const itemId = context.payload.client_payload.item_id;
-            const itemName = context.payload.client_payload.item_name;
+            const boardId = '18332167710';
+            const headers = {
+              'Authorization': process.env.MONDAY_API_TOKEN,
+              'Content-Type': 'application/json',
+              'API-Version': '2024-10'
+            };
 
-            if (!itemId || !itemName) {
-              core.setFailed('Missing item_id or item_name in payload');
-              return;
+            // Fetch all items from Monday Sprint Planning board
+            let allItems = [];
+            let cursor = null;
+
+            do {
+              const query = cursor
+                ? `query { next_items_page(cursor: "${cursor}", limit: 100) { cursor items { id name } } }`
+                : `query { boards(ids: [${boardId}]) { items_page(limit: 100) { cursor items { id name } } } }`;
+
+              const res = await fetch('https://api.monday.com/v2', {
+                method: 'POST', headers,
+                body: JSON.stringify({ query })
+              });
+              const data = await res.json();
+
+              if (data.errors) {
+                core.setFailed(`Monday API errors: ${JSON.stringify(data.errors)}`);
+                return;
+              }
+
+              let page;
+              if (cursor) {
+                page = data.data.next_items_page;
+              } else {
+                page = data.data.boards[0].items_page;
+              }
+
+              allItems = allItems.concat(page.items);
+              cursor = page.cursor;
+            } while (cursor);
+
+            core.info(`Found ${allItems.length} items on Monday board`);
+
+            // For each Monday item, check if a feature task already exists
+            let created = 0;
+            for (const item of allItems) {
+              const existing = await github.rest.search.issuesAndPullRequests({
+                q: `"### Monday Item ID" "${item.id}" in:body repo:${context.repo.owner}/${context.repo.repo} is:issue`
+              });
+
+              const alreadyExists = existing.data.items.some(issue => {
+                const body = issue.body || '';
+                const match = body.match(/### Monday Item ID\s*\n\s*(\d+)/);
+                return match && match[1] === String(item.id);
+              });
+
+              if (alreadyExists) {
+                continue;
+              }
+
+              const body = [
+                `### Monday Item ID`,
+                ``,
+                `${item.id}`,
+                ``,
+                `---`,
+                ``,
+                `### Implementation Tasks`,
+                ``,
+                `<!-- Create sub-issues in target repos and link them here -->`
+              ].join('\n');
+
+              const { data: issue } = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: item.name,
+                body: body,
+                labels: ['feature-task']
+              });
+
+              core.info(`Created feature task #${issue.number} for Monday item ${item.id}: ${item.name}`);
+              created++;
+
+              // Rate limit: pause between creations
+              if (created > 0) {
+                await new Promise(r => setTimeout(r, 1000));
+              }
             }
 
-            // Check if a feature task already exists for this Monday item
-            const existing = await github.rest.search.issuesAndPullRequests({
-              q: `"### Monday Item ID" "${itemId}" in:body repo:${context.repo.owner}/${context.repo.repo} is:issue`
-            });
-
-            const alreadyExists = existing.data.items.some(issue => {
-              const body = issue.body || '';
-              const match = body.match(/### Monday Item ID\s*\n\s*(\d+)/);
-              return match && match[1] === String(itemId);
-            });
-
-            if (alreadyExists) {
-              core.info(`Feature task already exists for Monday item ${itemId}. Skipping.`);
-              return;
-            }
-
-            const body = [
-              `### Monday Item ID`,
-              ``,
-              `${itemId}`,
-              ``,
-              `---`,
-              ``,
-              `### Implementation Tasks`,
-              ``,
-              `<!-- Tasks will be added here automatically -->`
-            ].join('\n');
-
-            const { data: issue } = await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: itemName,
-              body: body,
-              labels: ['feature-task']
-            });
-
-            core.info(`Created feature task #${issue.number}: ${issue.html_url}`);
+            core.info(`Done. Created ${created} new feature tasks.`);
