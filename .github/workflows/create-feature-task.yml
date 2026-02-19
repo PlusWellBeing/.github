@@ -56,20 +56,32 @@ jobs:
 
             core.info(`Found ${allItems.length} items on Monday board`);
 
-            // For each Monday item, check if a feature task already exists
+            // Fetch all existing feature tasks in one pass to avoid search API rate limits
+            const existingMondayIds = new Set();
+            let page = 1;
+            while (true) {
+              const { data: issues } = await github.rest.issues.listForRepo({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                labels: 'feature-task',
+                state: 'all',
+                per_page: 100,
+                page: page
+              });
+              if (issues.length === 0) break;
+              for (const issue of issues) {
+                const match = (issue.body || '').match(/### Monday Item ID\s*\n\s*(\d+)/);
+                if (match) existingMondayIds.add(match[1]);
+              }
+              page++;
+            }
+
+            core.info(`Found ${existingMondayIds.size} existing feature tasks`);
+
+            // Create feature tasks for new Monday items only
             let created = 0;
             for (const item of allItems) {
-              const existing = await github.rest.search.issuesAndPullRequests({
-                q: `"### Monday Item ID" "${item.id}" in:body repo:${context.repo.owner}/${context.repo.repo} is:issue`
-              });
-
-              const alreadyExists = existing.data.items.some(issue => {
-                const body = issue.body || '';
-                const match = body.match(/### Monday Item ID\s*\n\s*(\d+)/);
-                return match && match[1] === String(item.id);
-              });
-
-              if (alreadyExists) {
+              if (existingMondayIds.has(String(item.id))) {
                 continue;
               }
 
