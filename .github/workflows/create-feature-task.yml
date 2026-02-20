@@ -111,7 +111,7 @@ jobs:
               // Only include items where "Sync to GitHub" checkbox is checked
               const checked = items.filter(item => {
                 const col = item.column_values.find(c => c.id === 'boolean_mm0rhtf7');
-                return col && col.value && JSON.parse(col.value).checked === 'true';
+                return col && col.value && col.value !== 'null';
               });
               allItems = allItems.concat(checked);
             }
