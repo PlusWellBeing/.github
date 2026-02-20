@@ -88,7 +88,7 @@ jobs:
                         name
                         column_values(ids: ["boolean_mm0rhtf7"]) {
                           id
-                          value
+                          text
                         }
                       }
                     }
@@ -111,8 +111,7 @@ jobs:
               // Only include items where "Sync to GitHub" checkbox is checked
               const checked = items.filter(item => {
                 const col = item.column_values.find(c => c.id === 'boolean_mm0rhtf7');
-                if (!col || !col.value || col.value === 'null') return false;
-                try { return JSON.parse(col.value).checked === 'true'; } catch { return false; }
+                return col && col.text === 'v';
               });
               allItems = allItems.concat(checked);
             }
