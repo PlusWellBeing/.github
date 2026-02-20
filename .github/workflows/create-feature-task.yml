@@ -134,7 +134,7 @@ jobs:
               });
               if (issues.length === 0) break;
               for (const issue of issues) {
-                const match = (issue.body || '').match(/### Monday Item ID\s*\n\s*(\d+)/);
+                const match = (issue.body || '').match(/### Monday Item ID\s*\n\s*(\d+)/) || (issue.body || '').match(/monday\.com\/boards\/\d+\/pulses\/(\d+)/);
                 if (match) existingMondayIds.add(match[1]);
               }
               page++;
@@ -149,16 +149,17 @@ jobs:
                 continue;
               }
 
+              const mondayUrl = `https://plus-wellbeing.monday.com/boards/18332167710/pulses/${item.id}`;
               const body = [
-                `### Monday Item ID`,
-                ``,
+                `<!-- ### Monday Item ID`,
                 `${item.id}`,
+                `-->`,
+                ``,
+                `**Monday item:** [${item.name}](${mondayUrl})`,
                 ``,
                 `---`,
                 ``,
-                `### Implementation Tasks`,
-                ``,
-                `<!-- Create sub-issues in target repos and link them here -->`
+                `*Add implementation tasks as sub-issues*`
               ].join('\n');
 
               const { data: issue } = await github.rest.issues.create({

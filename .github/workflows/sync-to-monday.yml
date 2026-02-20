@@ -66,7 +66,7 @@ jobs:
             }
 
             const parentBody = parent.body || '';
-            const mondayIdMatch = parentBody.match(/### Monday Item ID\s*\n\s*(\d+)/);
+            const mondayIdMatch = parentBody.match(/### Monday Item ID\s*\n\s*(\d+)/) || parentBody.match(/monday\.com\/boards\/\d+\/pulses\/(\d+)/);
 
             if (!mondayIdMatch) {
               core.info('Parent issue does not have a Monday Item ID. Skipping.');
