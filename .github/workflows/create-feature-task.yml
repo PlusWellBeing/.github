@@ -140,11 +140,12 @@ jobs:
                       .filter(p => p.kind === 'person')
                       .map(p => String(p.id));
                     for (const pid of personIds) {
-                      if (mondayToGithub[pid]) assignees.push(mondayToGithub[pid]);
+                      assignees.push(mondayToGithub[pid] || 'Badams1');
                     }
                   } catch {}
                 }
-                item.assignees = assignees;
+                if (assignees.length === 0) assignees.push('Badams1');
+                item.assignees = [...new Set(assignees)];
                 allItems.push(item);
               }
             }
