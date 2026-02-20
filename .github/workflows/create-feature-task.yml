@@ -17,6 +17,22 @@ jobs:
           github-token: ${{ secrets.GH_ORG_PAT || github.token }}
           script: |
             const boardId = '18332167710';
+
+            // Monday user ID -> GitHub username mapping
+            const mondayToGithub = {
+              '96239704': 'Badams1',
+              '69730181': 'cwdcwd',
+              '69729944': 'ericrosenkranz',
+              '96230374': 'a-mirecki',
+              '96232936': 'carlos-henrique-dev',
+              '97332747': 'tjrunnels',
+              '98887492': 'Jbj2001',
+              '99805863': 'KonradWinkowski',
+              '77430520': 'denalimason',
+              '95360615': 'shanifargun',
+              '78392946': 'eskimm'
+            };
+
             const headers = {
               'Authorization': process.env.MONDAY_API_TOKEN,
               'Content-Type': 'application/json',
@@ -86,9 +102,10 @@ jobs:
                       items {
                         id
                         name
-                        column_values(ids: ["boolean_mm0rhtf7"]) {
+                        column_values(ids: ["boolean_mm0rhtf7", "people5"]) {
                           id
                           text
+                          value
                         }
                       }
                     }
@@ -109,11 +126,27 @@ jobs:
 
               const items = data.data.boards[0].groups[0].items_page.items;
               // Only include items where "Sync to GitHub" checkbox is checked
-              const checked = items.filter(item => {
-                const col = item.column_values.find(c => c.id === 'boolean_mm0rhtf7');
-                return col && col.text === 'v';
-              });
-              allItems = allItems.concat(checked);
+              for (const item of items) {
+                const checkCol = item.column_values.find(c => c.id === 'boolean_mm0rhtf7');
+                if (!checkCol || checkCol.text !== 'v') continue;
+
+                // Extract owner Monday user IDs
+                const peopleCol = item.column_values.find(c => c.id === 'people5');
+                const assignees = [];
+                if (peopleCol && peopleCol.value && peopleCol.value !== 'null') {
+                  try {
+                    const parsed = JSON.parse(peopleCol.value);
+                    const personIds = (parsed.personsAndTeams || [])
+                      .filter(p => p.kind === 'person')
+                      .map(p => String(p.id));
+                    for (const pid of personIds) {
+                      if (mondayToGithub[pid]) assignees.push(mondayToGithub[pid]);
+                    }
+                  } catch {}
+                }
+                item.assignees = assignees;
+                allItems.push(item);
+              }
             }
 
             core.info(`Found ${allItems.length} items with "Sync to GitHub" checked in current/next week groups`);
@@ -162,13 +195,17 @@ jobs:
                 `*Add implementation tasks as sub-issues*`
               ].join('\n');
 
-              const { data: issue } = await github.rest.issues.create({
+              const createParams = {
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 title: item.name,
                 body: body,
                 labels: ['feature-task']
-              });
+              };
+              if (item.assignees.length > 0) {
+                createParams.assignees = item.assignees;
+              }
+              const { data: issue } = await github.rest.issues.create(createParams);
 
               core.info(`Created feature task #${issue.number} for Monday item ${item.id}: ${item.name}`);
               created++;
