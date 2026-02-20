@@ -76,14 +76,21 @@ jobs:
               return;
             }
 
-            // Fetch items from matched groups only
+            // Fetch items from matched groups, filtered by "Sync to GitHub" checkbox
             let allItems = [];
             for (const groupId of targetGroupIds) {
               const query = `query {
                 boards(ids: [${boardId}]) {
                   groups(ids: ["${groupId}"]) {
                     items_page(limit: 100) {
-                      items { id name }
+                      items {
+                        id
+                        name
+                        column_values(ids: ["boolean_mm0rhtf7"]) {
+                          id
+                          value
+                        }
+                      }
                     }
                   }
                 }
@@ -101,10 +108,15 @@ jobs:
               }
 
               const items = data.data.boards[0].groups[0].items_page.items;
-              allItems = allItems.concat(items);
+              // Only include items where "Sync to GitHub" checkbox is checked
+              const checked = items.filter(item => {
+                const col = item.column_values.find(c => c.id === 'boolean_mm0rhtf7');
+                return col && col.value && JSON.parse(col.value).checked === 'true';
+              });
+              allItems = allItems.concat(checked);
             }
 
-            core.info(`Found ${allItems.length} items in current/next week groups`);
+            core.info(`Found ${allItems.length} items with "Sync to GitHub" checked in current/next week groups`);
 
             if (allItems.length === 0) return;
 
