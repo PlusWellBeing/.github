@@ -193,7 +193,7 @@ jobs:
                 ``,
                 `---`,
                 ``,
-                `*Add implementation tasks as sub-issues*`
+                `*Add implementation tasks as sub-issues (make sure to select repository destination)*`
               ].join('\n');
 
               const createParams = {
