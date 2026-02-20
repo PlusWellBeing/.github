@@ -102,7 +102,7 @@ jobs:
                       items {
                         id
                         name
-                        column_values(ids: ["boolean_mm0rhtf7", "multiple_person_mm0d8pta"]) {
+                        column_values(ids: ["boolean_mm0rhtf7", "multiple_person_mm0d8pta", "text_mkxe2v87"]) {
                           id
                           text
                           value
@@ -146,6 +146,11 @@ jobs:
                 }
                 if (assignees.length === 0) assignees.push('Badams1');
                 item.assignees = [...new Set(assignees)];
+
+                // Extract Acceptance Criteria
+                const acCol = item.column_values.find(c => c.id === 'text_mkxe2v87');
+                item.acceptanceCriteria = (acCol && acCol.text) ? acCol.text.trim() : '';
+
                 allItems.push(item);
               }
             }
@@ -184,17 +189,21 @@ jobs:
               }
 
               const mondayUrl = `https://plus-wellbeing.monday.com/boards/18332167710/pulses/${item.id}`;
-              const body = [
+              const bodyParts = [
                 `<!-- ### Monday Item ID`,
                 `${item.id}`,
                 `-->`,
                 ``,
-                `**Monday item:** [${item.name}](${mondayUrl})`,
-                ``,
-                `---`,
-                ``,
-                `*Add implementation tasks as sub-issues (make sure to select repository destination)*`
-              ].join('\n');
+                `**Monday item:** [${item.name}](${mondayUrl})`
+              ];
+
+              if (item.acceptanceCriteria) {
+                bodyParts.push(``, `### Acceptance Criteria`, ``, item.acceptanceCriteria);
+              }
+
+              bodyParts.push(``, `---`, ``, `*Add implementation tasks as sub-issues (make sure to select repository destination)*`);
+
+              const body = bodyParts.join('\n');
 
               const createParams = {
                 owner: context.repo.owner,
