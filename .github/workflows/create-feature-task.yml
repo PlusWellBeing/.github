@@ -102,7 +102,7 @@ jobs:
                       items {
                         id
                         name
-                        column_values(ids: ["boolean_mm0rhtf7", "people5"]) {
+                        column_values(ids: ["boolean_mm0rhtf7", "multiple_person_mm0d8pta"]) {
                           id
                           text
                           value
@@ -131,7 +131,7 @@ jobs:
                 if (!checkCol || checkCol.text !== 'v') continue;
 
                 // Extract owner Monday user IDs
-                const peopleCol = item.column_values.find(c => c.id === 'people5');
+                const peopleCol = item.column_values.find(c => c.id === 'multiple_person_mm0d8pta');
                 const assignees = [];
                 if (peopleCol && peopleCol.value && peopleCol.value !== 'null') {
                   try {
