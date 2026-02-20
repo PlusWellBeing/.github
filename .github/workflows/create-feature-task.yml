@@ -102,7 +102,7 @@ jobs:
                       items {
                         id
                         name
-                        column_values(ids: ["boolean_mm0rhtf7", "multiple_person_mm0d8pta", "text_mkxe2v87"]) {
+                        column_values(ids: ["boolean_mm0rhtf7", "multiple_person_mm0d8pta", "text_mkxe2v87", "status__design"]) {
                           id
                           text
                           value
@@ -129,6 +129,10 @@ jobs:
               for (const item of items) {
                 const checkCol = item.column_values.find(c => c.id === 'boolean_mm0rhtf7');
                 if (!checkCol || checkCol.text !== 'v') continue;
+
+                // Skip items with "Done" status
+                const statusCol = item.column_values.find(c => c.id === 'status__design');
+                if (statusCol && statusCol.text === 'Done') continue;
 
                 // Extract owner Monday user IDs
                 const peopleCol = item.column_values.find(c => c.id === 'multiple_person_mm0d8pta');
