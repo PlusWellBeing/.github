@@ -1,0 +1,10 @@
+name: Sync GitHub Issues to Monday
+
+on:
+  issues:
+    types: [opened, edited, closed, reopened]
+
+jobs:
+  sync:
+    uses: PlusWellBeing/.github/.github/workflows/sync-to-monday.yml@master
+    secrets: inherit
