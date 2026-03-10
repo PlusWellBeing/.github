@@ -1,5 +1,5 @@
 #!/bin/bash
-# analyze-release.sh — Local-only: send collected context through Claude for smoke test proposals
+# analyze-release.sh — Send collected context through Claude for smoke test proposals
 #
 # Usage:
 #   # From a CI-created context issue:
@@ -11,7 +11,11 @@
 #   # Full pipeline (collect + analyze in one shot, requires MONDAY_TOKEN too):
 #   ./analyze-release.sh --repo platform --branch master [--pr 42]
 #
-# Requires: ANTHROPIC_API_KEY, jq
+# AI Backend (set one):
+#   AWS Bedrock (org):  export AWS_REGION=us-east-1  (uses IAM credentials)
+#   Anthropic (local):  export ANTHROPIC_API_KEY='sk-ant-...'
+#
+# Requires: jq, aws CLI or curl
 # For --context: gh CLI
 # For --repo: MONDAY_TOKEN, gh CLI
 
@@ -41,7 +45,9 @@ usage() {
   echo "  --output        Write proposal JSON to file (default: stdout)"
   echo "  --create-issue  Create a GitHub Issue with the proposal"
   echo ""
-  echo "Requires ANTHROPIC_API_KEY env var (your key stays local)."
+  echo "AI Backend (picks first available):"
+  echo "  AWS_REGION set + aws CLI    → uses Bedrock"
+  echo "  ANTHROPIC_API_KEY set       → uses Anthropic API directly"
   exit 1
 }
 
@@ -64,25 +70,35 @@ if [ -z "$CONTEXT_ISSUE" ] && [ -z "$CONTEXT_FILE" ] && [ -z "$REPO_NAME" ]; the
   usage
 fi
 
-# --- Validate ---
-if [ -z "$ANTHROPIC_API_KEY" ]; then
-  echo "Error: ANTHROPIC_API_KEY env var is required." >&2
-  echo "  export ANTHROPIC_API_KEY='sk-ant-...'" >&2
+# --- Detect AI backend ---
+AI_BACKEND=""
+BEDROCK_MODEL="us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+BEDROCK_REGION="${AWS_REGION:-us-east-1}"
+
+if [ -n "${AWS_REGION:-}" ] && command -v aws &> /dev/null; then
+  AI_BACKEND="bedrock"
+elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+  AI_BACKEND="anthropic"
+else
+  echo "Error: No AI backend available." >&2
+  echo "  Set AWS_REGION (for Bedrock) or ANTHROPIC_API_KEY (for Anthropic API)" >&2
   exit 1
 fi
 
+echo "AI backend: $AI_BACKEND" >&2
+
+# --- Validate ---
 if ! command -v jq &> /dev/null; then
   echo "Error: jq is required. Install with: brew install jq" >&2
   exit 1
 fi
 
-echo "=== Smoke Test Analyzer (local) ===" >&2
+echo "=== Smoke Test Analyzer ===" >&2
 
 # --- Step 1: Get context ---
 CONTEXT=""
 
 if [ -n "$CONTEXT_FILE" ]; then
-  # Read from local file
   echo "Reading context from: $CONTEXT_FILE" >&2
   if [ ! -f "$CONTEXT_FILE" ]; then
     echo "Error: File not found: $CONTEXT_FILE" >&2
@@ -91,7 +107,6 @@ if [ -n "$CONTEXT_FILE" ]; then
   CONTEXT=$(cat "$CONTEXT_FILE")
 
 elif [ -n "$CONTEXT_ISSUE" ]; then
-  # Extract context JSON from GitHub issue body
   echo "Fetching context from issue #$CONTEXT_ISSUE..." >&2
   ISSUE_BODY=$(gh issue view "$CONTEXT_ISSUE" --repo "PlusWellBeing/.github" --json body --jq '.body')
   CONTEXT=$(echo "$ISSUE_BODY" | sed -n '/```json/,/```/p' | sed '1d;$d')
@@ -102,7 +117,6 @@ elif [ -n "$CONTEXT_ISSUE" ]; then
   fi
 
 elif [ -n "$REPO_NAME" ]; then
-  # Full pipeline: collect context first, then analyze
   echo "Collecting context for $REPO_NAME..." >&2
 
   COLLECT_ARGS="--repo $REPO_NAME"
@@ -140,40 +154,59 @@ PROMPT="${PROMPT//\{\{CHANGED_FILES\}\}/$CHANGED_FILES}"
 PROMPT="${PROMPT//\{\{DIFF\}\}/$DIFF}"
 PROMPT="${PROMPT//\{\{BOARD_STATES\}\}/$BOARD_STATES_TEXT}"
 
-# --- Step 3: Call Claude API ---
-echo "Calling Claude API..." >&2
+# --- Step 3: Call Claude ---
+echo "Calling Claude ($AI_BACKEND)..." >&2
 
-CLAUDE_REQUEST=$(jq -n \
-  --arg prompt "$PROMPT" \
-  '{
-    model: "claude-sonnet-4-20250514",
-    max_tokens: 4096,
-    messages: [{role: "user", content: $prompt}]
-  }')
+if [ "$AI_BACKEND" = "bedrock" ]; then
+  BEDROCK_BODY=$(jq -n \
+    --arg prompt "$PROMPT" \
+    '{
+      anthropic_version: "bedrock-2023-05-31",
+      max_tokens: 4096,
+      messages: [{role: "user", content: $prompt}]
+    }')
 
-CLAUDE_RESPONSE=$(curl -s "https://api.anthropic.com/v1/messages" \
-  -H "x-api-key: $ANTHROPIC_API_KEY" \
-  -H "anthropic-version: 2023-06-01" \
-  -H "content-type: application/json" \
-  -d "$CLAUDE_REQUEST")
+  CLAUDE_RESPONSE=$(aws bedrock-runtime invoke-model \
+    --region "$BEDROCK_REGION" \
+    --model-id "$BEDROCK_MODEL" \
+    --content-type "application/json" \
+    --accept "application/json" \
+    --body "$(echo "$BEDROCK_BODY" | base64)" \
+    --query 'body' \
+    --output text 2>/dev/null | base64 --decode)
 
-# Extract text content
-PROPOSAL=$(echo "$CLAUDE_RESPONSE" | jq -r '.content[0].text // empty')
+  PROPOSAL=$(echo "$CLAUDE_RESPONSE" | jq -r '.content[0].text // empty')
+
+elif [ "$AI_BACKEND" = "anthropic" ]; then
+  CLAUDE_REQUEST=$(jq -n \
+    --arg prompt "$PROMPT" \
+    '{
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 4096,
+      messages: [{role: "user", content: $prompt}]
+    }')
+
+  CLAUDE_RESPONSE=$(curl -s "https://api.anthropic.com/v1/messages" \
+    -H "x-api-key: $ANTHROPIC_API_KEY" \
+    -H "anthropic-version: 2023-06-01" \
+    -H "content-type: application/json" \
+    -d "$CLAUDE_REQUEST")
+
+  PROPOSAL=$(echo "$CLAUDE_RESPONSE" | jq -r '.content[0].text // empty')
+fi
 
 if [ -z "$PROPOSAL" ]; then
-  echo "Error: No response from Claude API" >&2
+  echo "Error: No response from Claude" >&2
   echo "Response: $CLAUDE_RESPONSE" >&2
   exit 1
 fi
 
 # Validate JSON — try several extraction strategies
 if ! echo "$PROPOSAL" | jq . > /dev/null 2>&1; then
-  # Try extracting first JSON object
   EXTRACTED=$(echo "$PROPOSAL" | sed -n '/^{/,/^}/p')
   if echo "$EXTRACTED" | jq . > /dev/null 2>&1; then
     PROPOSAL="$EXTRACTED"
   else
-    # Try extracting from ```json fences
     EXTRACTED=$(echo "$PROPOSAL" | sed -n '/```json/,/```/p' | sed '1d;$d')
     if echo "$EXTRACTED" | jq . > /dev/null 2>&1; then
       PROPOSAL="$EXTRACTED"
