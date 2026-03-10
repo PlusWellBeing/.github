@@ -1,0 +1,47 @@
+name: Smoke Test Updater
+
+on:
+  workflow_call:
+    secrets:
+      MONDAY_API_TOKEN:
+        required: true
+      GH_ORG_PAT:
+        required: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout org repo (scripts + config)
+        uses: actions/checkout@v4
+        with:
+          repository: PlusWellBeing/.github
+          ref: master
+          token: ${{ secrets.GH_ORG_PAT || github.token }}
+          path: org
+
+      - name: Install jq
+        run: |
+          if ! command -v jq &> /dev/null; then
+            sudo apt-get update && sudo apt-get install -y jq
+          fi
+
+      - name: Collect context and create issue
+        env:
+          MONDAY_TOKEN: ${{ secrets.MONDAY_API_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_ORG_PAT || github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: |
+          cd org
+          chmod +x .github/scripts/collect-context.sh .github/scripts/monday-api.sh
+          .github/scripts/collect-context.sh --ci --create-issue --output /tmp/context.json
+
+      - name: Upload context artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-test-context
+          path: /tmp/context.json
+          if-no-files-found: ignore

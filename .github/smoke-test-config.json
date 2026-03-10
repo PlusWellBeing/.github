@@ -1,0 +1,37 @@
+{
+  "boards": {
+    "PWA": {
+      "board_id": "18397679085",
+      "checkbox_col": "boolean_mm0va0hz",
+      "criteria_col": "text_mm023zqp",
+      "repos": ["pwb-pwa-app"]
+    },
+    "Ops": {
+      "board_id": "18397679291",
+      "checkbox_col": "boolean_mm0v6h74",
+      "criteria_col": "text_mm02hejx",
+      "repos": ["pwb-front-end"]
+    },
+    "Provider": {
+      "board_id": "18397679592",
+      "checkbox_col": "boolean_mm0va17s",
+      "criteria_col": "text_mm02227h",
+      "repos": ["pwb-front-end"]
+    },
+    "Mobile": {
+      "board_id": "18397679461",
+      "checkbox_col": "boolean_mm0vq4c4",
+      "criteria_col": "text_mm0vtdhk",
+      "repos": ["pwb-pwa-app"]
+    },
+    "Patient": {
+      "board_id": "18401466454",
+      "checkbox_col": "boolean_mm0wryt6",
+      "criteria_col": "text_mm0wm2z7",
+      "repos": ["pwb-patient-app"]
+    }
+  },
+  "cross_cutting_repos": {
+    "platform": ["PWA", "Ops", "Provider", "Patient"]
+  }
+}
