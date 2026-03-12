@@ -11,11 +11,7 @@
 #   # Full pipeline (collect + analyze in one shot, requires MONDAY_TOKEN too):
 #   ./analyze-release.sh --repo platform --branch master [--pr 42]
 #
-# AI Backend (picks first available):
-#   Copilot CLI (CI):   COPILOT_GITHUB_TOKEN set + copilot CLI installed
-#   Anthropic (local):  ANTHROPIC_API_KEY set
-#
-# Requires: jq
+# Requires: COPILOT_GITHUB_TOKEN + copilot CLI, jq
 # For --context: gh CLI
 # For --repo: MONDAY_TOKEN, gh CLI
 
@@ -45,9 +41,7 @@ usage() {
   echo "  --output        Write proposal JSON to file (default: stdout)"
   echo "  --create-issue  Create a GitHub Issue with the proposal"
   echo ""
-  echo "AI Backend (picks first available):"
-  echo "  COPILOT_GITHUB_TOKEN set + copilot CLI  → GitHub Copilot (Claude Sonnet)"
-  echo "  ANTHROPIC_API_KEY set                    → Anthropic API directly"
+  echo "Requires: COPILOT_GITHUB_TOKEN env var + copilot CLI installed"
   exit 1
 }
 
@@ -70,20 +64,16 @@ if [ -z "$CONTEXT_ISSUE" ] && [ -z "$CONTEXT_FILE" ] && [ -z "$REPO_NAME" ]; the
   usage
 fi
 
-# --- Detect AI backend ---
-AI_BACKEND=""
-
-if [ -n "${COPILOT_GITHUB_TOKEN:-}" ] && command -v copilot &> /dev/null; then
-  AI_BACKEND="copilot"
-elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then
-  AI_BACKEND="anthropic"
-else
-  echo "Error: No AI backend available." >&2
-  echo "  Set COPILOT_GITHUB_TOKEN (for Copilot CLI) or ANTHROPIC_API_KEY (for Anthropic API)" >&2
+# --- Validate AI backend ---
+if [ -z "${COPILOT_GITHUB_TOKEN:-}" ]; then
+  echo "Error: COPILOT_GITHUB_TOKEN env var is required." >&2
   exit 1
 fi
 
-echo "AI backend: $AI_BACKEND" >&2
+if ! command -v copilot &> /dev/null; then
+  echo "Error: copilot CLI is required. Install with: npm install -g @github/copilot" >&2
+  exit 1
+fi
 
 # --- Validate ---
 if ! command -v jq &> /dev/null; then
@@ -152,39 +142,18 @@ PROMPT="${PROMPT//\{\{CHANGED_FILES\}\}/$CHANGED_FILES}"
 PROMPT="${PROMPT//\{\{DIFF\}\}/$DIFF}"
 PROMPT="${PROMPT//\{\{BOARD_STATES\}\}/$BOARD_STATES_TEXT}"
 
-# --- Step 3: Call Claude ---
-echo "Calling Claude ($AI_BACKEND)..." >&2
+# --- Step 3: Call Claude via Copilot CLI ---
+echo "Calling Claude via Copilot CLI..." >&2
 
-PROPOSAL=""
+# Write prompt to temp file (avoids shell escaping issues with large prompts)
+PROMPT_TMPFILE=$(mktemp)
+echo "$PROMPT" > "$PROMPT_TMPFILE"
 
-if [ "$AI_BACKEND" = "copilot" ]; then
-  # Write prompt to temp file (avoids shell escaping issues with large prompts)
-  PROMPT_TMPFILE=$(mktemp)
-  echo "$PROMPT" > "$PROMPT_TMPFILE"
+PROPOSAL=$(copilot -p "$(cat "$PROMPT_TMPFILE")" \
+  --model claude-sonnet-4.5 \
+  --no-ask-user 2>/dev/null) || true
 
-  PROPOSAL=$(copilot -p "$(cat "$PROMPT_TMPFILE")" \
-    --model claude-sonnet-4.5 \
-    --no-ask-user 2>/dev/null) || true
-
-  rm -f "$PROMPT_TMPFILE"
-
-elif [ "$AI_BACKEND" = "anthropic" ]; then
-  CLAUDE_REQUEST=$(jq -n \
-    --arg prompt "$PROMPT" \
-    '{
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 4096,
-      messages: [{role: "user", content: $prompt}]
-    }')
-
-  CLAUDE_RESPONSE=$(curl -s "https://api.anthropic.com/v1/messages" \
-    -H "x-api-key: $ANTHROPIC_API_KEY" \
-    -H "anthropic-version: 2023-06-01" \
-    -H "content-type: application/json" \
-    -d "$CLAUDE_REQUEST")
-
-  PROPOSAL=$(echo "$CLAUDE_RESPONSE" | jq -r '.content[0].text // empty')
-fi
+rm -f "$PROMPT_TMPFILE"
 
 if [ -z "$PROPOSAL" ]; then
   echo "Error: No response from Claude" >&2
