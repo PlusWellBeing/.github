@@ -11,11 +11,11 @@
 #   # Full pipeline (collect + analyze in one shot, requires MONDAY_TOKEN too):
 #   ./analyze-release.sh --repo platform --branch master [--pr 42]
 #
-# AI Backend (set one):
-#   AWS Bedrock (org):  export AWS_REGION=us-east-1  (uses IAM credentials)
-#   Anthropic (local):  export ANTHROPIC_API_KEY='sk-ant-...'
+# AI Backend (picks first available):
+#   Copilot CLI (CI):   COPILOT_GITHUB_TOKEN set + copilot CLI installed
+#   Anthropic (local):  ANTHROPIC_API_KEY set
 #
-# Requires: jq, aws CLI or curl
+# Requires: jq
 # For --context: gh CLI
 # For --repo: MONDAY_TOKEN, gh CLI
 
@@ -46,8 +46,8 @@ usage() {
   echo "  --create-issue  Create a GitHub Issue with the proposal"
   echo ""
   echo "AI Backend (picks first available):"
-  echo "  AWS_REGION set + aws CLI    → uses Bedrock"
-  echo "  ANTHROPIC_API_KEY set       → uses Anthropic API directly"
+  echo "  COPILOT_GITHUB_TOKEN set + copilot CLI  → GitHub Copilot (Claude Sonnet)"
+  echo "  ANTHROPIC_API_KEY set                    → Anthropic API directly"
   exit 1
 }
 
@@ -72,16 +72,14 @@ fi
 
 # --- Detect AI backend ---
 AI_BACKEND=""
-BEDROCK_MODEL="us.anthropic.claude-sonnet-4-5-20250929-v1:0"
-BEDROCK_REGION="${AWS_REGION:-us-east-1}"
 
-if [ -n "${AWS_REGION:-}" ] && command -v aws &> /dev/null; then
-  AI_BACKEND="bedrock"
+if [ -n "${COPILOT_GITHUB_TOKEN:-}" ] && command -v copilot &> /dev/null; then
+  AI_BACKEND="copilot"
 elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then
   AI_BACKEND="anthropic"
 else
   echo "Error: No AI backend available." >&2
-  echo "  Set AWS_REGION (for Bedrock) or ANTHROPIC_API_KEY (for Anthropic API)" >&2
+  echo "  Set COPILOT_GITHUB_TOKEN (for Copilot CLI) or ANTHROPIC_API_KEY (for Anthropic API)" >&2
   exit 1
 fi
 
@@ -157,25 +155,18 @@ PROMPT="${PROMPT//\{\{BOARD_STATES\}\}/$BOARD_STATES_TEXT}"
 # --- Step 3: Call Claude ---
 echo "Calling Claude ($AI_BACKEND)..." >&2
 
-if [ "$AI_BACKEND" = "bedrock" ]; then
-  BEDROCK_BODY=$(jq -n \
-    --arg prompt "$PROMPT" \
-    '{
-      anthropic_version: "bedrock-2023-05-31",
-      max_tokens: 4096,
-      messages: [{role: "user", content: $prompt}]
-    }')
+PROPOSAL=""
 
-  CLAUDE_RESPONSE=$(aws bedrock-runtime invoke-model \
-    --region "$BEDROCK_REGION" \
-    --model-id "$BEDROCK_MODEL" \
-    --content-type "application/json" \
-    --accept "application/json" \
-    --body "$(echo "$BEDROCK_BODY" | base64)" \
-    --query 'body' \
-    --output text 2>/dev/null | base64 --decode)
+if [ "$AI_BACKEND" = "copilot" ]; then
+  # Write prompt to temp file (avoids shell escaping issues with large prompts)
+  PROMPT_TMPFILE=$(mktemp)
+  echo "$PROMPT" > "$PROMPT_TMPFILE"
 
-  PROPOSAL=$(echo "$CLAUDE_RESPONSE" | jq -r '.content[0].text // empty')
+  PROPOSAL=$(copilot -p "$(cat "$PROMPT_TMPFILE")" \
+    --model claude-sonnet-4.5 \
+    --no-ask-user 2>/dev/null) || true
+
+  rm -f "$PROMPT_TMPFILE"
 
 elif [ "$AI_BACKEND" = "anthropic" ]; then
   CLAUDE_REQUEST=$(jq -n \
@@ -197,7 +188,6 @@ fi
 
 if [ -z "$PROPOSAL" ]; then
   echo "Error: No response from Claude" >&2
-  echo "Response: $CLAUDE_RESPONSE" >&2
   exit 1
 fi
 

@@ -5,14 +5,16 @@ on:
     secrets:
       MONDAY_API_TOKEN:
         required: true
+      COPILOT_PAT:
+        required: true
       GH_ORG_PAT:
         required: false
 
 jobs:
-  collect:
+  analyze:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout org repo (scripts + config)
+      - name: Checkout org repo (scripts + config + prompt)
         uses: actions/checkout@v4
         with:
           repository: PlusWellBeing/.github
@@ -20,13 +22,17 @@ jobs:
           token: ${{ secrets.GH_ORG_PAT || github.token }}
           path: org
 
-      - name: Install jq
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+
+      - name: Install dependencies
         run: |
+          npm install -g @github/copilot
           if ! command -v jq &> /dev/null; then
             sudo apt-get update && sudo apt-get install -y jq
           fi
 
-      - name: Collect context and create issue
+      - name: Collect context
         env:
           MONDAY_TOKEN: ${{ secrets.MONDAY_API_TOKEN }}
           GH_TOKEN: ${{ secrets.GH_ORG_PAT || github.token }}
@@ -36,12 +42,24 @@ jobs:
         run: |
           cd org
           chmod +x .github/scripts/collect-context.sh .github/scripts/monday-api.sh
-          .github/scripts/collect-context.sh --ci --create-issue --output /tmp/context.json
+          .github/scripts/collect-context.sh --ci --output /tmp/context.json
 
-      - name: Upload context artifact
+      - name: Analyze with Copilot CLI
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_PAT }}
+          GH_TOKEN: ${{ secrets.GH_ORG_PAT || github.token }}
+        run: |
+          cd org
+          chmod +x .github/scripts/analyze-release.sh
+          .github/scripts/analyze-release.sh \
+            --context-file /tmp/context.json \
+            --output /tmp/proposal.json \
+            --create-issue
+
+      - name: Upload proposal artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: smoke-test-context
-          path: /tmp/context.json
+          name: smoke-test-proposal
+          path: /tmp/proposal.json
           if-no-files-found: ignore
