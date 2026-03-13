@@ -113,11 +113,14 @@ fi
 
 echo "  PR: $PR_TITLE" >&2
 
-# Truncate diff if too large
-DIFF_LINES=$(echo "$DIFF" | wc -l | tr -d ' ')
+# Truncate diff if too large (use temp file to avoid SIGPIPE with head in pipefail mode)
+DIFF_LINES=$(printf '%s\n' "$DIFF" | wc -l | tr -d ' ')
 if [ "$DIFF_LINES" -gt 2000 ]; then
   echo "  Warning: Diff is $DIFF_LINES lines, truncating to 2000" >&2
-  DIFF=$(echo "$DIFF" | head -2000)
+  DIFF_TMPFILE=$(mktemp)
+  printf '%s\n' "$DIFF" > "$DIFF_TMPFILE"
+  DIFF=$(head -2000 "$DIFF_TMPFILE")
+  rm -f "$DIFF_TMPFILE"
   DIFF="$DIFF
 ... (truncated from $DIFF_LINES lines)"
 fi
