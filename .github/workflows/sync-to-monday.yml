@@ -277,7 +277,12 @@ jobs:
               });
               const data = await res.json();
               const subitems = data.data?.items?.[0]?.subitems || [];
-              return subitems.find(s => s.name.startsWith(prefix));
+              // Match by exact prefix (repo+number) first
+              const exactMatch = subitems.find(s => s.name.startsWith(prefix));
+              if (exactMatch) return exactMatch;
+              // Dedup: also match by issue title (handles transferred issues
+              // where repo/number changed but title stayed the same)
+              return subitems.find(s => s.name.endsWith(` - ${issueTitle}`));
             }
 
             try {
@@ -287,8 +292,25 @@ jobs:
                 const subitemStatus = issueState === 'closed' ? 'Done' : 'Working on it';
                 const columnValues = JSON.stringify({
                   status: { label: subitemStatus },
+                  link_mm0pht2g: { url: issueUrl, text: `#${issueNumber}` },
                   numeric_mm0p6e06: String(estimate)
                 });
+
+                // Update name if repo/number changed (e.g. after transfer)
+                if (existing.name !== subitemName) {
+                  const renameMut = `
+                    mutation ($boardId: ID!, $itemId: ID!, $columnValues: JSON!) {
+                      change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $columnValues) { id }
+                    }
+                  `;
+                  await fetch('https://api.monday.com/v2', {
+                    method: 'POST', headers,
+                    body: JSON.stringify({
+                      query: `mutation { change_simple_column_value(board_id: ${subitemBoardId}, item_id: ${existing.id}, column_id: "name", value: ${JSON.stringify(subitemName)}) { id } }`
+                    })
+                  });
+                  core.info(`Renamed subitem ${existing.id}: ${existing.name} -> ${subitemName}`);
+                }
 
                 const mutation = `
                   mutation ($boardId: ID!, $itemId: ID!, $columnValues: JSON!) {
