@@ -73,8 +73,25 @@ if [ "$MODE" = "ci" ]; then
   BRANCH="${GITHUB_REF_NAME:-master}"
 
   MERGE_COMMIT="${GITHUB_SHA:-}"
+  IS_TAG="false"
+  if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+    IS_TAG="true"
+  fi
+
   if [ -n "$MERGE_COMMIT" ]; then
+    # Try to find PR associated with this commit
     PR_NUMBER=$(gh pr list --repo "$FULL_REPO" --state merged --search "$MERGE_COMMIT" --json number --jq '.[0].number' 2>/dev/null || echo "")
+
+    # For tag pushes, also try finding the PR via the merge commit
+    if [ -z "$PR_NUMBER" ] && [ "$IS_TAG" = "true" ]; then
+      PR_NUMBER=$(gh api "repos/$FULL_REPO/commits/$MERGE_COMMIT/pulls" --jq '.[0].number' 2>/dev/null || echo "")
+    fi
+  fi
+
+  # For tag-based repos, resolve the default branch for fallback PR lookup
+  if [ "$IS_TAG" = "true" ]; then
+    BRANCH=$(gh api "repos/$FULL_REPO" --jq '.default_branch' 2>/dev/null || echo "master")
+    echo "  Tag-based trigger ($GITHUB_REF_NAME), using default branch: $BRANCH" >&2
   fi
 else
   FULL_REPO="PlusWellBeing/$REPO_NAME"
